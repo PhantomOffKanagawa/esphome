@@ -50,6 +50,7 @@ class WiiBalanceBoard : public Component {
   void disconnect_all();
   void set_balance_update_interval(uint32_t ms) { balance_update_interval_ = ms; }
   void set_off_board_timeout(uint32_t ms) { off_board_timeout_ = ms; }
+  void set_udp_interval(uint32_t ms) { udp_interval_ = ms; }
 
   void set_top_left(sensor::Sensor *s) { top_left_ = s; }
   void set_top_right(sensor::Sensor *s) { top_right_ = s; }
