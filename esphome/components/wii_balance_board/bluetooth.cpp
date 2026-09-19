@@ -4,6 +4,9 @@
 #include "esphome/core/preferences.h"
 
 #include <esp_bt.h>
+#if __has_include(<esp_coexist.h>)
+#include <esp_coexist.h>
+#endif
 
 #include <cstring>
 #include <unordered_map>
@@ -230,11 +233,24 @@ struct Bluetooth::Impl {
       }
     } else if (data[1] == 0x1A && data[2] == 0x0C) {  // write_scan_enable
       if (data[3] == 0x00) {                          // OK
-        initialized = true;
-        readyListener(bluetooth);
+        if (initialized) {
+          return;  // Re-enable after a disconnect; nothing else to do.
+        }
+        CHECK_RESULT(enqueue_cmd_write_page_scan_activity(txBuffer, 0x0100, 0x0012));
       } else {
         ESP_LOGE(TAG, "write_scan_enable failed.");
       }
+    } else if (data[1] == 0x1C && data[2] == 0x0C) {  // write_page_scan_activity
+      if (data[3] != 0x00) {
+        ESP_LOGW(TAG, "write_page_scan_activity failed (%02X), keeping defaults", data[3]);
+      }
+      CHECK_RESULT(enqueue_cmd_write_page_scan_type(txBuffer, 0x01));
+    } else if (data[1] == 0x47 && data[2] == 0x0C) {  // write_page_scan_type
+      if (data[3] != 0x00) {
+        ESP_LOGW(TAG, "write_page_scan_type failed (%02X), keeping default", data[3]);
+      }
+      initialized = true;
+      readyListener(bluetooth);
     }
   }
 
@@ -797,6 +813,10 @@ static bool start_bt_controller() {
     return false;
   }
   ESP_LOGI(TAG, "BT controller enabled (Classic BR/EDR)");
+#if __has_include(<esp_coexist.h>)
+  // WiFi stays connected the whole time; make sure BT page scan gets air time.
+  esp_coex_preference_set(ESP_COEX_PREFER_BT);
+#endif
   return true;
 }
 

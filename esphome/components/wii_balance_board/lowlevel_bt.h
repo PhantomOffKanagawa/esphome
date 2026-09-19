@@ -17,6 +17,8 @@
 #define HCI_WRITE_LOCAL_NAME (0x0013 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
 #define HCI_WRITE_CLASS_OF_DEVICE (0x0024 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
 #define HCI_WRITE_SCAN_ENABLE (0x001A | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
+#define HCI_WRITE_PAGE_SCAN_ACTIVITY (0x001C | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
+#define HCI_WRITE_PAGE_SCAN_TYPE (0x0047 | HCI_GRP_HOST_CONT_BASEBAND_CMDS)
 #define HCI_INQUIRY (0x0001 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_INQUIRY_CANCEL (0x0002 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_REMOTE_NAME_REQUEST (0x0019 | HCI_GRP_LINK_CONT_CMDS)
@@ -101,6 +103,39 @@ static bool enqueue_cmd_write_class_of_device(RingBuffer &buffer, uint8_t *cod) 
     for (uint8_t i = 0; i < 3; i++) {
       UINT8_TO_STREAM(buf, cod[i]);
     }
+    return true;
+  }
+  return false;
+}
+
+// Page scan interval/window in 0.625 ms slots. Interval 0x0100 = 160 ms (default is
+// 1.28 s), window 0x0012 = 11.25 ms. Shorter interval = a cold page from the board
+// gets answered well inside its 5.12 s page timeout.
+static bool enqueue_cmd_write_page_scan_activity(RingBuffer &buffer, uint16_t interval, uint16_t window) {
+  if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 4)) {
+    uint8_t *buf = out.data();
+
+    UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
+    UINT16_TO_STREAM(buf, HCI_WRITE_PAGE_SCAN_ACTIVITY);
+    UINT8_TO_STREAM(buf, 4);
+
+    UINT16_TO_STREAM(buf, interval);
+    UINT16_TO_STREAM(buf, window);
+    return true;
+  }
+  return false;
+}
+
+// 0x00 standard, 0x01 interlaced (covers both page scan frequency trains per window).
+static bool enqueue_cmd_write_page_scan_type(RingBuffer &buffer, uint8_t type) {
+  if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 1)) {
+    uint8_t *buf = out.data();
+
+    UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
+    UINT16_TO_STREAM(buf, HCI_WRITE_PAGE_SCAN_TYPE);
+    UINT8_TO_STREAM(buf, 1);
+
+    UINT8_TO_STREAM(buf, type);
     return true;
   }
   return false;
