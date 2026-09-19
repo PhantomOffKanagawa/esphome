@@ -112,7 +112,7 @@ struct Bluetooth::Impl {
   std::unordered_set<uint64_t> connectRequests;
   std::unordered_map<uint64_t, HCIInquiryResult> nameRequests;
 
-  Impl(Bluetooth *bluetooth) : bluetooth(bluetooth), rxBuffer(1024), txBuffer(1024) {
+  Impl(Bluetooth *bluetooth) : bluetooth(bluetooth), rxBuffer(4096), txBuffer(2048) {
     esp_read_mac(macAddress.data(), ESP_MAC_BT);
   }
 
@@ -126,7 +126,13 @@ struct Bluetooth::Impl {
       }
     }
 
-    if (auto rxData = rxBuffer.read(0)) {
+    // Drain everything the controller queued since the last loop; the board streams
+    // reports at ~100 Hz and handling one packet per loop lets the buffer fill up.
+    for (int drained = 0; drained < 64; drained++) {
+      auto rxData = rxBuffer.read(0);
+      if (!rxData) {
+        break;
+      }
       const char *type;
       uint8_t typeColor;
       switch (rxData[0]) {
@@ -737,7 +743,10 @@ Bluetooth::Bluetooth() : m_impl(std::make_unique<Bluetooth::Impl>(this)) {
 
   auto *impl = m_impl.get();
   gListener = [impl](uint8_t *data, size_t len) {
-    if (auto buffer = impl->rxBuffer.allocate(len, portMAX_DELAY)) {
+    // Runs on the BT controller task. Never block forever here: if the loop task is
+    // waiting in esp_vhci_host_send_packet() while this waits for buffer space, both
+    // deadlock and the task watchdog fires.
+    if (auto buffer = impl->rxBuffer.allocate(len, 20)) {
       memcpy(buffer.data(), data, len);
       return ESP_OK;
     }

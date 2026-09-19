@@ -1,6 +1,7 @@
 #pragma once
 
 #include "esphome/core/component.h"
+#include "esphome/core/helpers.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/sensor/sensor.h"
 #include "wii.h"
@@ -50,6 +51,7 @@ class WiiBalanceBoard : public Component {
   detail::TaskQueue queue;
 
   float std_dev_;
+  HighFrequencyLoopRequester high_freq_;
   int led_pin_;
 
   sensor::Sensor *temperature_sensor_{nullptr};

@@ -36,6 +36,7 @@ void WiiBalanceBoard::board_connected(uint16_t handle) {
   } else {
     // Queue sampling timeout
     sampleMap.emplace(handle, Sample());
+    high_freq_.start();
 
     // Schedule timeout disconnect
     queue.add(handle, millis() + 60000, [this](int handle) {
@@ -59,6 +60,9 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
       weight_->publish_state(sample.measurement);
     }
     sampleMap.erase(handle);
+  }
+  if (sampleMap.empty()) {
+    high_freq_.stop();
   }
 }
 
