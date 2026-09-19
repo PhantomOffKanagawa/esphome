@@ -227,11 +227,21 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   float totalWeight = (topRightLoad + bottomRightLoad + topLeftLoad + bottomLeftLoad) / 1000;
   float adjusted = totalWeight * tempFactor;
 
+  // Battery and temperatures come with every report; publish them once per session
+  // so they are populated in balance mode too (scale mode also publishes at the end).
+  if (!sample.metaPublished) {
+    sample.metaPublished = true;
+    if (reference_temperature_sensor_ != nullptr) reference_temperature_sensor_->publish_state(reference_temp);
+    if (temperature_sensor_ != nullptr) temperature_sensor_->publish_state(temperature);
+    if (battery_level_ != nullptr) battery_level_->publish_state(battery);
+  }
+
   if (balance_mode_) {
+    // Balance mode: only the live/posture sensors update. The Weight sensor is
+    // reserved for scale mode so half-on / one-foot readings never pollute it.
     balance_sample(handle, topLeftLoad / 1000 * tempFactor, topRightLoad / 1000 * tempFactor,
                    bottomLeftLoad / 1000 * tempFactor, bottomRightLoad / 1000 * tempFactor, adjusted);
-    // Fall through: the stable-weight logic below still runs so the Weight sensor
-    // keeps updating in balance mode, it just never disconnects.
+    return;
   }
 
   if (!isnan(sample.measurement)) {
@@ -268,17 +278,6 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
     float deviation = std::sqrt(variance);
 
     if (mean > 10 && deviation < std_dev_) {  // Ignore all means below 10kg.
-      if (balance_mode_) {
-        // Publish and start over; stay connected.
-        if (weight_ != nullptr) {
-          weight_->publish_state(mean);
-        }
-        for (auto &v : sample.samples) {
-          v = NAN;
-        }
-        sample.sample_count = 0;
-        return;
-      }
       sample.measurement = mean;
 
       // We have a valid sample, schedule board disconnect.
