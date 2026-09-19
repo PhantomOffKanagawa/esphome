@@ -27,6 +27,49 @@ CONF_TEMPERATURE = "temperature_sensor"
 CONF_REF_TEMPERATURE = "reference_temperature_sensor"
 CONF_STDDEV = "standard_deviation"
 CONF_LED_PIN = "led_pin"
+CONF_BALANCE_UPDATE_INTERVAL = "balance_update_interval"
+CONF_OFF_BOARD_TIMEOUT = "off_board_timeout"
+CONF_TOP_LEFT = "top_left"
+CONF_TOP_RIGHT = "top_right"
+CONF_BOTTOM_LEFT = "bottom_left"
+CONF_BOTTOM_RIGHT = "bottom_right"
+CONF_LIVE_WEIGHT = "live_weight"
+CONF_LEFT_PERCENT = "left_percent"
+CONF_FRONT_PERCENT = "front_percent"
+CONF_COP_X = "center_of_pressure_x"
+CONF_COP_Y = "center_of_pressure_y"
+CONF_SWAY = "sway"
+CONF_ON_BOARD = "on_board"
+
+ICON_SCALE_BALANCE = "mdi:scale-balance"
+ICON_TARGET = "mdi:target"
+
+
+def _load_schema():
+    return sensor.sensor_schema(
+        unit_of_measurement=UNIT_KILOGRAM,
+        icon=ICON_SCALE,
+        accuracy_decimals=2,
+        state_class=STATE_CLASS_MEASUREMENT,
+    )
+
+
+def _percent_schema():
+    return sensor.sensor_schema(
+        unit_of_measurement=UNIT_PERCENT,
+        icon=ICON_SCALE_BALANCE,
+        accuracy_decimals=1,
+        state_class=STATE_CLASS_MEASUREMENT,
+    )
+
+
+def _cm_schema():
+    return sensor.sensor_schema(
+        unit_of_measurement="cm",
+        icon=ICON_TARGET,
+        accuracy_decimals=2,
+        state_class=STATE_CLASS_MEASUREMENT,
+    )
 
 wii_balance_board_ns = cg.esphome_ns.namespace("wii_balance_board")
 WiiBalanceBoard = wii_balance_board_ns.class_("WiiBalanceBoard", cg.Component)
@@ -92,6 +135,25 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_BLUETOOTH,
         ),
         cv.Optional(CONF_STDDEV, default=0.4): cv.float_range(0, 5),
+        cv.Optional(
+            CONF_BALANCE_UPDATE_INTERVAL, default="250ms"
+        ): cv.positive_time_period_milliseconds,
+        cv.Optional(
+            CONF_OFF_BOARD_TIMEOUT, default="15s"
+        ): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_TOP_LEFT): _load_schema(),
+        cv.Optional(CONF_TOP_RIGHT): _load_schema(),
+        cv.Optional(CONF_BOTTOM_LEFT): _load_schema(),
+        cv.Optional(CONF_BOTTOM_RIGHT): _load_schema(),
+        cv.Optional(CONF_LIVE_WEIGHT): _load_schema(),
+        cv.Optional(CONF_LEFT_PERCENT): _percent_schema(),
+        cv.Optional(CONF_FRONT_PERCENT): _percent_schema(),
+        cv.Optional(CONF_COP_X): _cm_schema(),
+        cv.Optional(CONF_COP_Y): _cm_schema(),
+        cv.Optional(CONF_SWAY): _cm_schema(),
+        cv.Optional(CONF_ON_BOARD): binary_sensor.binary_sensor_schema(
+            icon="mdi:human-male-height"
+        ),
     }
 )
 
@@ -139,3 +201,26 @@ async def to_code(config):
 
     if stddev := config.get(CONF_STDDEV):
         cg.add(var.set_stddev(stddev))
+
+    cg.add(var.set_balance_update_interval(config[CONF_BALANCE_UPDATE_INTERVAL]))
+    cg.add(var.set_off_board_timeout(config[CONF_OFF_BOARD_TIMEOUT]))
+
+    for key, setter in (
+        (CONF_TOP_LEFT, var.set_top_left),
+        (CONF_TOP_RIGHT, var.set_top_right),
+        (CONF_BOTTOM_LEFT, var.set_bottom_left),
+        (CONF_BOTTOM_RIGHT, var.set_bottom_right),
+        (CONF_LIVE_WEIGHT, var.set_live_weight),
+        (CONF_LEFT_PERCENT, var.set_left_percent),
+        (CONF_FRONT_PERCENT, var.set_front_percent),
+        (CONF_COP_X, var.set_cop_x),
+        (CONF_COP_Y, var.set_cop_y),
+        (CONF_SWAY, var.set_sway),
+    ):
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(setter(sens))
+
+    if CONF_ON_BOARD in config:
+        bs = await binary_sensor.new_binary_sensor(config[CONF_ON_BOARD])
+        cg.add(var.set_on_board(bs))

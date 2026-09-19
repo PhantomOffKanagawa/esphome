@@ -4,6 +4,8 @@
 #include "esphome/core/application.h"
 
 #include <numeric>
+#include <algorithm>
+#include <cmath>
 #include "utils.h"
 
 namespace esphome {
@@ -38,13 +40,143 @@ void WiiBalanceBoard::board_connected(uint16_t handle) {
     sampleMap.emplace(handle, Sample());
     high_freq_.start();
 
-    // Schedule timeout disconnect
-    queue.add(handle, millis() + 60000, [this](int handle) {
-      ESP_LOGI(TAG, "Scheduled disconnect.");
-      wii.disconnect(handle, 0x0011);
-      wii.disconnect(handle, 0x0013);
-    });
+    if (balance_mode_) {
+      ESP_LOGI(TAG, "Balance mode: streaming until off-board for %u ms", (unsigned) off_board_timeout_);
+      last_on_board_ms_ = millis();
+      last_publish_ms_ = millis();
+      window_.reset();
+    } else {
+      // Schedule timeout disconnect
+      queue.add(handle, millis() + 60000, [this](int handle) {
+        ESP_LOGI(TAG, "Scheduled disconnect.");
+        wii.disconnect(handle, 0x0011);
+        wii.disconnect(handle, 0x0013);
+      });
+    }
   }
+}
+
+void WiiBalanceBoard::set_balance_mode(bool enable) {
+  if (enable == balance_mode_) {
+    return;
+  }
+  balance_mode_ = enable;
+  ESP_LOGI(TAG, "Balance mode %s", enable ? "ON" : "OFF");
+  for (auto &kv : sampleMap) {
+    uint16_t handle = kv.first;
+    if (enable) {
+      queue.cancel(handle);
+      kv.second.measurement = NAN;
+      last_on_board_ms_ = millis();
+      last_publish_ms_ = millis();
+      window_.reset();
+    } else {
+      kv.second.measurement = NAN;
+      kv.second.sample_count = 0;
+      for (auto &v : kv.second.samples) {
+        v = NAN;
+      }
+      queue.add(handle, millis() + 60000, [this](int handle) {
+        ESP_LOGI(TAG, "Scheduled disconnect.");
+        wii.disconnect(handle, 0x0011);
+        wii.disconnect(handle, 0x0013);
+      });
+    }
+  }
+  if (!enable && on_board_ != nullptr) {
+    on_board_->publish_state(false);
+  }
+}
+
+void WiiBalanceBoard::disconnect_all() {
+  for (auto &kv : sampleMap) {
+    ESP_LOGI(TAG, "Disconnecting board %u", kv.first);
+    queue.cancel(kv.first);
+    wii.disconnect(kv.first, 0x0011);
+    wii.disconnect(kv.first, 0x0013);
+  }
+}
+
+// Board is 43.3 x 23.8 cm; load cells sit close to the corners. Center of pressure
+// is expressed in cm from the board center, +x = right, +y = front (toes).
+static constexpr float BOARD_HALF_WIDTH_CM = 21.5f;
+static constexpr float BOARD_HALF_DEPTH_CM = 11.9f;
+
+void WiiBalanceBoard::balance_sample(uint16_t handle, float tl, float tr, float bl, float br, float total) {
+  uint32_t now = millis();
+  bool on = total > 10.0f;
+  if (on) {
+    last_on_board_ms_ = now;
+  }
+  if (on != on_board_state_) {
+    on_board_state_ = on;
+    if (on_board_ != nullptr) {
+      on_board_->publish_state(on);
+    }
+  }
+
+  if (on) {
+    float left = tl + bl, right = tr + br, front = tl + tr, back = bl + br;
+    float cx = (right - left) / total * BOARD_HALF_WIDTH_CM;
+    float cy = (front - back) / total * BOARD_HALF_DEPTH_CM;
+    window_.tl += tl;
+    window_.tr += tr;
+    window_.bl += bl;
+    window_.br += br;
+    window_.total += total;
+    window_.cx += cx;
+    window_.cy += cy;
+    window_.cx2 += cx * cx;
+    window_.cy2 += cy * cy;
+    window_.n++;
+  }
+
+  if (now - last_publish_ms_ >= balance_update_interval_) {
+    last_publish_ms_ = now;
+    publish_balance();
+  }
+
+  if (!on && now - last_on_board_ms_ > off_board_timeout_) {
+    ESP_LOGI(TAG, "Off board for %u ms, disconnecting", (unsigned) off_board_timeout_);
+    last_on_board_ms_ = now;  // avoid re-triggering while the disconnect is in flight
+    wii.disconnect(handle, 0x0011);
+    wii.disconnect(handle, 0x0013);
+  }
+}
+
+void WiiBalanceBoard::publish_balance() {
+  auto pub = [](sensor::Sensor *s, float v) {
+    if (s != nullptr) {
+      s->publish_state(v);
+    }
+  };
+  if (window_.n == 0) {
+    // Nobody on the board: report zeros so the UI can show an empty board.
+    pub(top_left_, 0);
+    pub(top_right_, 0);
+    pub(bottom_left_, 0);
+    pub(bottom_right_, 0);
+    pub(live_weight_, 0);
+    return;
+  }
+  double n = window_.n;
+  float tl = window_.tl / n, tr = window_.tr / n, bl = window_.bl / n, br = window_.br / n;
+  float total = window_.total / n;
+  float mcx = window_.cx / n, mcy = window_.cy / n;
+  float vx = window_.cx2 / n - mcx * mcx, vy = window_.cy2 / n - mcy * mcy;
+  float sway = std::sqrt(std::max(0.0f, vx) + std::max(0.0f, vy));
+
+  pub(top_left_, tl);
+  pub(top_right_, tr);
+  pub(bottom_left_, bl);
+  pub(bottom_right_, br);
+  pub(live_weight_, total);
+  pub(left_percent_, (tl + bl) / total * 100.0f);
+  pub(front_percent_, (tl + tr) / total * 100.0f);
+  pub(cop_x_, mcx);
+  pub(cop_y_, mcy);
+  pub(sway_, sway);
+  window_.reset();
 }
 
 void WiiBalanceBoard::board_disconnected(uint16_t handle) {
@@ -63,15 +195,27 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
   }
   if (sampleMap.empty()) {
     high_freq_.stop();
+    if (on_board_state_) {
+      on_board_state_ = false;
+      if (on_board_ != nullptr) {
+        on_board_->publish_state(false);
+      }
+    }
+    window_.reset();
+    publish_balance();
   }
 }
 
 void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t reference_temp, uint8_t temperature,
                                    float topRightLoad, float bottomRightLoad, float topLeftLoad, float bottomLeftLoad) {
-  Sample &sample = sampleMap.at(handle);
+  auto it = sampleMap.find(handle);
+  if (it == sampleMap.end()) {
+    return;
+  }
+  Sample &sample = it->second;
 
   // Ignore zero data
-  if (reference_temp == 0 || !isnan(sample.measurement)) {
+  if (reference_temp == 0) {
     return;
   }
 
@@ -79,8 +223,20 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
   sample.battery = battery;
   sample.temperature = temperature;
 
+  float tempFactor = (.999 * (1.0 - .0007 * (sample.temperature - sample.referenceTemperature)));
   float totalWeight = (topRightLoad + bottomRightLoad + topLeftLoad + bottomLeftLoad) / 1000;
-  float adjusted = (.999 * totalWeight * (1.0 - .0007 * (sample.temperature - sample.referenceTemperature)));
+  float adjusted = totalWeight * tempFactor;
+
+  if (balance_mode_) {
+    balance_sample(handle, topLeftLoad / 1000 * tempFactor, topRightLoad / 1000 * tempFactor,
+                   bottomLeftLoad / 1000 * tempFactor, bottomRightLoad / 1000 * tempFactor, adjusted);
+    // Fall through: the stable-weight logic below still runs so the Weight sensor
+    // keeps updating in balance mode, it just never disconnects.
+  }
+
+  if (!isnan(sample.measurement)) {
+    return;
+  }
 
   // Ignore small samples (noise), in std dev calculation.
   if (adjusted < 10) {
@@ -112,6 +268,17 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
     float deviation = std::sqrt(variance);
 
     if (mean > 10 && deviation < std_dev_) {  // Ignore all means below 10kg.
+      if (balance_mode_) {
+        // Publish and start over; stay connected.
+        if (weight_ != nullptr) {
+          weight_->publish_state(mean);
+        }
+        for (auto &v : sample.samples) {
+          v = NAN;
+        }
+        sample.sample_count = 0;
+        return;
+      }
       sample.measurement = mean;
 
       // We have a valid sample, schedule board disconnect.
