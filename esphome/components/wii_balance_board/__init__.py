@@ -1,5 +1,5 @@
 import esphome.codegen as cg
-from esphome.components import binary_sensor, sensor
+from esphome.components import binary_sensor, esp32, sensor
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_BATTERY_LEVEL,
@@ -18,7 +18,7 @@ from esphome.const import (
     UNIT_PERCENT,
 )
 
-DEPENDENCIES = ["binary_sensor", "sensor"]
+DEPENDENCIES = ["binary_sensor", "sensor", "esp32"]
 AUTO_LOAD = ["binary_sensor", "sensor"]
 
 CONF_SYNCING = "syncing"
@@ -97,6 +97,20 @@ CONFIG_SCHEMA = cv.Schema(
 
 
 async def to_code(config):
+    # Newer ESPHome (2025.x+) builds Arduino on top of ESP-IDF and excludes the
+    # "bt" IDF component unless something requests it.
+    if hasattr(esp32, "request_bluetooth"):
+        esp32.request_bluetooth()
+    if hasattr(esp32, "request_software_coexistence"):
+        esp32.request_software_coexistence()
+    esp32.add_idf_sdkconfig_option("CONFIG_BT_ENABLED", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_BT_CLASSIC_ENABLED", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_BT_BLUEDROID_ENABLED", True)
+    esp32.add_idf_sdkconfig_option("CONFIG_BT_BLE_ENABLED", False)
+    esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", False)
+    esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BLE_ONLY", False)
+    esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", True)
+
     var = cg.new_Pvariable(config[CONF_ID])
 
     await cg.register_component(var, config)
