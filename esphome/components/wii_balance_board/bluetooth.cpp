@@ -1,7 +1,6 @@
 #include "bluetooth.h"
 #include "esphome/core/log.h"
 
-#include <esp32-hal-bt.h>
 #include <esp_bt.h>
 
 #include <unordered_map>
@@ -19,9 +18,9 @@
 
 static const char *TAG = "bluetooth";
 
-static_assert(CONFIG_BT_ENABLED && CONFIG_BLUEDROID_ENABLED,
+static_assert(CONFIG_BT_ENABLED,
               "Bluetooth is not enabled! Please run `make menuconfig` to and enable it");
-static_assert(CONFIG_CLASSIC_BT_ENABLED, "Board does not support Bluetooth BR/EDR");
+static_assert(CONFIG_BT_CLASSIC_ENABLED, "Board does not support Bluetooth BR/EDR");
 
 namespace esphome::wii_balance_board::detail {
 
@@ -352,7 +351,8 @@ struct Bluetooth::Impl {
 
   void sendHCIScan() {
     if (!initialized) {
-      ESP_LOGE(TAG, "Cannot sync, bluetooth not initialized");
+      ESP_LOGE(TAG, "Cannot sync, bluetooth not initialized (controller status=%d, HCI reset never completed)",
+               (int) esp_bt_controller_get_status());
       return;
     }
 
@@ -698,8 +698,32 @@ static int recv(uint8_t *data, uint16_t len) { return gListener(data, len); }
 
 static const esp_vhci_host_callback_t callback = {sendReady, recv};
 
+// Start the BT controller directly via ESP-IDF instead of Arduino's btStart(),
+// which silently returns false when the Arduino core is built without its BT shim.
+static bool start_bt_controller() {
+  esp_bt_controller_status_t status = esp_bt_controller_get_status();
+  if (status == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+    return true;
+  }
+  if (status == ESP_BT_CONTROLLER_STATUS_IDLE) {
+    esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    esp_err_t err = esp_bt_controller_init(&cfg);
+    if (err != ESP_OK) {
+      ESP_LOGE(TAG, "esp_bt_controller_init failed: %s", esp_err_to_name(err));
+      return false;
+    }
+  }
+  esp_err_t err = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "esp_bt_controller_enable(CLASSIC_BT) failed: %s", esp_err_to_name(err));
+    return false;
+  }
+  ESP_LOGI(TAG, "BT controller enabled (Classic BR/EDR)");
+  return true;
+}
+
 Bluetooth::Bluetooth() : m_impl(std::make_unique<Bluetooth::Impl>(this)) {
-  if (!btStart()) {
+  if (!start_bt_controller()) {
     ESP_LOGE(TAG, "Failed to initialize Bluetooth");
     return;
   }
