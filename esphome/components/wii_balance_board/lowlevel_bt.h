@@ -344,7 +344,7 @@ static bool enqueue_cmd_disconnect(RingBuffer &buffer, uint16_t connection_handl
     UINT8_TO_STREAM(buf, 3);
 
     UINT16_TO_STREAM(buf, connection_handle);
-    UINT8_TO_STREAM(buf, 0x15);
+    UINT8_TO_STREAM(buf, 0x13);  // Remote User Terminated Connection (0x15 "power off" seems to make the board drop the bond)
     return true;
   }
   return false;

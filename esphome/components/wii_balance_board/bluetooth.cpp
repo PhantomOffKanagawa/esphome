@@ -116,6 +116,9 @@ struct Bluetooth::Impl {
   bool initialized{false};
   std::unordered_set<uint64_t> discovered;
   std::unordered_set<uint64_t> connectRequests;
+  // Devices we connected to from an inquiry (Pair button + red sync button). That is
+  // a fresh pairing: always PIN-authenticate so the board records us as its host.
+  std::unordered_set<uint64_t> freshPairings;
   std::unordered_map<uint64_t, HCIInquiryResult> nameRequests;
 
   Impl(Bluetooth *bluetooth) : bluetooth(bluetooth), rxBuffer(4096), txBuffer(2048) {
@@ -356,6 +359,13 @@ struct Bluetooth::Impl {
     uint64_t bdaddr = *(const uint64_t *) (data) &0xFFFFFFFFFFFFull;
     loadLinkKey();
 
+    if (freshPairings.contains(bdaddr)) {
+      ESP_LOGI(TAG, "Link key request from %012llX during fresh pairing, forcing PIN pairing",
+               (unsigned long long) bdaddr);
+      CHECK_RESULT(enqueue_cmd_negative_reply(txBuffer, bdaddr));
+      return;
+    }
+
     if (linkKey.bdaddr == bdaddr) {
       ESP_LOGI(TAG, "Link key request from %012llX, replying with stored key", (unsigned long long) bdaddr);
       CHECK_RESULT(enqueue_cmd_link_key_reply(txBuffer, bdaddr, linkKey.key));
@@ -383,6 +393,7 @@ struct Bluetooth::Impl {
     memcpy(linkKey.key, data + 6, 16);
     ESP_LOGI(TAG, "Stored link key for %012llX (type %u)", (unsigned long long) bdaddr, data[22]);
     linkKeyPref.save(&linkKey);
+    freshPairings.erase(bdaddr);
   }
 
   void handleHCIEvent(uint8_t eventCode, uint8_t *data, size_t len) {
@@ -488,6 +499,7 @@ struct Bluetooth::Impl {
 
   void sendHCIConnect(const HCIInquiryResult &result) {
     connectRequests.emplace(result.bdaddr);
+    freshPairings.emplace(result.bdaddr);
     CHECK_RESULT(enqueue_cmd_create_connection(txBuffer, result.bdaddr, 0x0008, result.psrm, result.clkOffset, 0x00));
   }
 
