@@ -31,6 +31,14 @@ class Wii::BalanceBoard {
     bt->l2send_data(handle, 0x0013, ledData, 3);
   }
 
+  // Ask the board for a status report (0x20). The calibration state machine starts
+  // from that report; a host-initiated pairing gets one unsolicited, a board-initiated
+  // reconnect does not.
+  void requestStatus(uint16_t handle) {
+    uint8_t data[] = {0xA2, 0x15, 0x00};
+    bt->l2send_data(handle, 0x0013, data, 3);
+  }
+
   void set_reporting_mode(uint16_t handle, uint8_t reportingMode, bool continuous) {
     uint8_t data[] = {0xA2, 0x12, (uint8_t) (continuous ? 0x04 : 0x00), reportingMode};
     bt->l2send_data(handle, 0x0013, data, 4);
@@ -287,6 +295,7 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                      if (conn.psm == 0x0013) {
                        connectedBoards.emplace(conn.handle, std::make_unique<BalanceBoard>(bluetooth, conn.handle));
                        connectedBoards[conn.handle]->setLeds(bluetooth, conn.handle, std::bitset<4>(0b0001));
+                       connectedBoards[conn.handle]->requestStatus(conn.handle);
                        this->eventListener(BalanceBoardConnected{
                            .handle = conn.handle,
                        });

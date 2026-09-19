@@ -277,6 +277,9 @@ struct Bluetooth::Impl {
     if (status == 0x00) {
       hciListener(bluetooth, HCIDisconnected{.handle = handle, .reason = data[3]});
       connections.remove(handle);
+      // Make sure we stay reachable for a board-initiated reconnect.
+      ESP_LOGD(TAG, "Re-enabling inquiry+page scan");
+      CHECK_RESULT(enqueue_cmd_write_scan_enable(txBuffer, 3));
     }
   }
 
@@ -367,6 +370,15 @@ struct Bluetooth::Impl {
   }
 
   void handleHCIEvent(uint8_t eventCode, uint8_t *data, size_t len) {
+    ESP_LOGV(TAG, "HCI event 0x%02X len %u", eventCode, (unsigned) len);
+    if (eventCode == 0x04 || eventCode == 0x03 || eventCode == 0x05 || eventCode == 0x17 || eventCode == 0x18) {
+      ESP_LOGD(TAG, "HCI event 0x%02X (%s)", eventCode,
+               eventCode == 0x04   ? "connection request"
+               : eventCode == 0x03 ? "connection complete"
+               : eventCode == 0x05 ? "disconnection complete"
+               : eventCode == 0x17 ? "link key request"
+                                   : "link key notification");
+    }
     switch (eventCode) {
       case 0x0F:
         handleHCICommandStatusEvent(data, len);

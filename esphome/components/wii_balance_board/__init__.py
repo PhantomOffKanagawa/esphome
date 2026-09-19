@@ -110,6 +110,8 @@ async def to_code(config):
     esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BTDM", False)
     esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BLE_ONLY", False)
     esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODE_BR_EDR_ONLY", True)
+    # Keep the controller awake so page scans answer a board-initiated reconnect.
+    esp32.add_idf_sdkconfig_option("CONFIG_BTDM_CTRL_MODEM_SLEEP", False)
 
     var = cg.new_Pvariable(config[CONF_ID])
 
