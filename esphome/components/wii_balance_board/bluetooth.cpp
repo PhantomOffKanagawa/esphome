@@ -698,6 +698,13 @@ static int recv(uint8_t *data, uint16_t len) { return gListener(data, len); }
 
 static const esp_vhci_host_callback_t callback = {sendReady, recv};
 
+// Arduino's initArduino() releases the Classic BT controller memory at boot unless
+// btClassicInUse()/btInUse() (weak symbols in esp32-hal-bt.c) return true. Provide
+// strong definitions so the memory is kept; otherwise esp_bt_controller_init()
+// fails with ESP_ERR_INVALID_STATE.
+extern "C" bool btClassicInUse(void) { return true; }
+extern "C" bool btInUse(void) { return true; }
+
 // Start the BT controller directly via ESP-IDF instead of Arduino's btStart(),
 // which silently returns false when the Arduino core is built without its BT shim.
 static bool start_bt_controller() {
