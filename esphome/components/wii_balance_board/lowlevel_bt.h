@@ -24,6 +24,7 @@
 #define HCI_AUTHENTICATION (0x0011 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_NEGATIVE_REPLY (0x000C | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_PIN_REPLY (0x000D | HCI_GRP_LINK_CONT_CMDS)
+#define HCI_LINK_KEY_REPLY (0x000B | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_ACCEPT_CONNECTION (0x0009 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_DISCONNECT (0x0006 | HCI_GRP_LINK_CONT_CMDS)
 
@@ -210,6 +211,23 @@ static bool enqueue_cmd_negative_reply(RingBuffer &buffer, uint64_t bdaddr) {
     UINT8_TO_STREAM(buf, 6);
 
     U64_ADDR_TO_STREAM(buf, bdaddr);
+    return true;
+  }
+  return false;
+}
+
+static bool enqueue_cmd_link_key_reply(RingBuffer &buffer, uint64_t bdaddr, const uint8_t *key) {
+  if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 22)) {
+    uint8_t *buf = out.data();
+
+    UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
+    UINT16_TO_STREAM(buf, HCI_LINK_KEY_REPLY);
+    UINT8_TO_STREAM(buf, 6 + 16);  // 22
+
+    U64_ADDR_TO_STREAM(buf, bdaddr);
+    for (uint8_t i = 0; i < 16; i++) {
+      UINT8_TO_STREAM(buf, key[i]);
+    }
     return true;
   }
   return false;

@@ -3,7 +3,13 @@
 #include <cstdio>
 
 #ifndef NATIVE
-#include <esp32-hal-log.h>
+// Route through ESPHome's logger so messages reach the dashboard/API log stream
+// (Arduino's log_* macros are compiled out and printf only hits the UART).
+#include "esphome/core/log.h"
+#define log_d(format, ...) ESP_LOGD("wii_bt", format, ##__VA_ARGS__)
+#define log_i(format, ...) ESP_LOGI("wii_bt", format, ##__VA_ARGS__)
+#define log_w(format, ...) ESP_LOGW("wii_bt", format, ##__VA_ARGS__)
+#define log_e(format, ...) ESP_LOGE("wii_bt", format, ##__VA_ARGS__)
 #else
 #define log_d(format, ...) printf("\033[32m[D]\033[0m " format "\n", ##__VA_ARGS__)
 #define log_i(format, ...) printf("\033[1;32m[I]\033[0m " format "\n", ##__VA_ARGS__)

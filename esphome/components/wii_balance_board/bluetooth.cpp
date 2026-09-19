@@ -1,8 +1,11 @@
 #include "bluetooth.h"
 #include "esphome/core/log.h"
+#include "esphome/core/helpers.h"
+#include "esphome/core/preferences.h"
 
 #include <esp_bt.h>
 
+#include <cstring>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -114,6 +117,29 @@ struct Bluetooth::Impl {
 
   Impl(Bluetooth *bluetooth) : bluetooth(bluetooth), rxBuffer(4096), txBuffer(2048) {
     esp_read_mac(macAddress.data(), ESP_MAC_BT);
+  }
+
+  // Link key from the last successful pairing, persisted so the board can
+  // reconnect on its own (power button) after a reboot.
+  struct LinkKeyStore {
+    uint64_t bdaddr{0};
+    uint8_t key[16]{};
+  } __attribute__((packed));
+  LinkKeyStore linkKey;
+  bool linkKeyLoaded{false};
+  ESPPreferenceObject linkKeyPref;
+
+  void loadLinkKey() {
+    if (linkKeyLoaded) {
+      return;
+    }
+    linkKeyLoaded = true;
+    linkKeyPref = global_preferences->make_preference<LinkKeyStore>(fnv1_hash("wii_balance_board_link_key"));
+    if (linkKeyPref.load(&linkKey) && linkKey.bdaddr != 0) {
+      ESP_LOGI(TAG, "Loaded stored link key for %012llX", (unsigned long long) linkKey.bdaddr);
+    } else {
+      linkKey.bdaddr = 0;
+    }
   }
 
   void step() {
@@ -304,16 +330,40 @@ struct Bluetooth::Impl {
     hciListener(bluetooth, HCIPINRequest{.bdaddr = bdaddr});
   }
 
+  // HCI event 0x17: Link Key Request (bdaddr only). Answer with the stored key if
+  // it belongs to this device, otherwise let the listener send a negative reply so
+  // the controller falls back to PIN pairing.
   void handleHCILinkKeyRequest(uint8_t *data, size_t len) {
     uint64_t bdaddr = *(const uint64_t *) (data) &0xFFFFFFFFFFFFull;
-    uint8_t keyType = data[22];
+    loadLinkKey();
 
+    if (linkKey.bdaddr == bdaddr) {
+      ESP_LOGI(TAG, "Link key request from %012llX, replying with stored key", (unsigned long long) bdaddr);
+      CHECK_RESULT(enqueue_cmd_link_key_reply(txBuffer, bdaddr, linkKey.key));
+      return;
+    }
+
+    ESP_LOGI(TAG, "Link key request from %012llX, no stored key", (unsigned long long) bdaddr);
     hciListener(bluetooth, HCILinkKeyRequest{
                                .bdaddr = bdaddr,
-                               .keyType = keyType,
-                               .linkKeyData = data + 6,
-                               .size = 16,
+                               .keyType = 0,
+                               .linkKeyData = nullptr,
+                               .size = 0,
                            });
+  }
+
+  // HCI event 0x18: Link Key Notification (bdaddr 6, key 16, type 1).
+  void handleHCILinkKeyNotification(uint8_t *data, size_t len) {
+    if (len < 23) {
+      ESP_LOGW(TAG, "Short link key notification (%u bytes)", (unsigned) len);
+      return;
+    }
+    uint64_t bdaddr = *(const uint64_t *) (data) &0xFFFFFFFFFFFFull;
+    loadLinkKey();
+    linkKey.bdaddr = bdaddr;
+    memcpy(linkKey.key, data + 6, 16);
+    ESP_LOGI(TAG, "Stored link key for %012llX (type %u)", (unsigned long long) bdaddr, data[22]);
+    linkKeyPref.save(&linkKey);
   }
 
   void handleHCIEvent(uint8_t eventCode, uint8_t *data, size_t len) {
@@ -344,6 +394,9 @@ struct Bluetooth::Impl {
         break;
       case 0x17:
         handleHCILinkKeyRequest(data, len);
+        break;
+      case 0x18:
+        handleHCILinkKeyNotification(data, len);
         break;
       case 0x16:
         handleHCIPINRequest(data, len);
