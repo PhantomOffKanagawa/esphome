@@ -24,6 +24,7 @@
 #define HCI_REMOTE_NAME_REQUEST (0x0019 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_CREATE_CONNECTION (0x0005 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_AUTHENTICATION (0x0011 | HCI_GRP_LINK_CONT_CMDS)
+#define HCI_SET_CONN_ENCRYPTION (0x0013 | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_NEGATIVE_REPLY (0x000C | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_PIN_REPLY (0x000D | HCI_GRP_LINK_CONT_CMDS)
 #define HCI_LINK_KEY_REPLY (0x000B | HCI_GRP_LINK_CONT_CMDS)
@@ -218,6 +219,22 @@ static bool enqueue_cmd_create_connection(RingBuffer &buffer, uint64_t bd_addr, 
     UINT8_TO_STREAM(buf, 0);        // Reserved
     UINT16_TO_STREAM(buf, clkofs);  // Clock_Offset
     UINT8_TO_STREAM(buf, ars);      // Allow_Role_Switch
+    return true;
+  }
+  return false;
+}
+
+static bool enqueue_cmd_set_conn_encryption(RingBuffer &buffer, uint16_t connection_handle, bool enable) {
+  if (auto out = buffer.allocate(HCI_H4_CMD_PREAMBLE_SIZE + 3)) {
+    uint8_t *buf = out.data();
+
+    UINT8_TO_STREAM(buf, H4_TYPE_COMMAND);
+    UINT16_TO_STREAM(buf, HCI_SET_CONN_ENCRYPTION);
+    UINT8_TO_STREAM(buf, 3);
+
+    UINT8_TO_STREAM(buf, connection_handle & 0xFF);
+    UINT8_TO_STREAM(buf, (connection_handle >> 8) & 0x0F);
+    UINT8_TO_STREAM(buf, enable ? 0x01 : 0x00);
     return true;
   }
   return false;

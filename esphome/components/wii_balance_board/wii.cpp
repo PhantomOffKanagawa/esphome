@@ -303,7 +303,12 @@ Wii::Wii(Bluetooth *bt) : bluetooth(bt) {
                    },
                    [this](const ACLData &data) {
                      BalanceBoardData out;
-                     if (connectedBoards.at(data.handle)->onData(&out, data.handle, data.data, data.len)) {
+                     auto board = connectedBoards.find(data.handle);
+                     if (board == connectedBoards.end()) {
+                       log_w("Data on unknown handle %u, ignoring", data.handle);
+                       return;
+                     }
+                     if (board->second->onData(&out, data.handle, data.data, data.len)) {
                        this->eventListener(out);
                      }
                    },

@@ -417,6 +417,28 @@ struct Bluetooth::Impl {
       case 0x03:
         handleHCIConnectionComplete(data, len);
         break;
+      case 0x06: {  // Authentication Complete: status, handle
+        uint16_t handle = (data[2] << 8) | data[1];
+        if (data[0] == 0x00) {
+          // bluez and the Wii both encrypt the link after authenticating; the board
+          // appears to only remember a host (for power-button reconnect) when the
+          // link was encrypted.
+          ESP_LOGI(TAG, "Authentication complete on handle %u, enabling encryption", handle);
+          CHECK_RESULT(enqueue_cmd_set_conn_encryption(txBuffer, handle, true));
+        } else {
+          ESP_LOGW(TAG, "Authentication failed on handle %u (status %02X)", handle, data[0]);
+        }
+        break;
+      }
+      case 0x08: {  // Encryption Change: status, handle, enabled
+        uint16_t handle = (data[2] << 8) | data[1];
+        if (data[0] == 0x00) {
+          ESP_LOGI(TAG, "Encryption %s on handle %u", data[3] ? "enabled" : "disabled", handle);
+        } else {
+          ESP_LOGW(TAG, "Encryption change failed on handle %u (status %02X)", handle, data[0]);
+        }
+        break;
+      }
       case 0x04:
         handleHCIConnectionRequest(data, len);
         break;
