@@ -4,6 +4,9 @@
 #include "esphome/core/application.h"
 
 #include <numeric>
+#include <lwip/sockets.h>
+#include <lwip/inet.h>
+#include <errno.h>
 #include <algorithm>
 #include <cmath>
 #include "utils.h"
@@ -129,6 +132,20 @@ void WiiBalanceBoard::balance_sample(uint16_t handle, float tl, float tr, float 
     window_.cx2 += cx * cx;
     window_.cy2 += cy * cy;
     window_.n++;
+
+    udp_window_.tl += tl;
+    udp_window_.tr += tr;
+    udp_window_.bl += bl;
+    udp_window_.br += br;
+    udp_window_.total += total;
+    udp_window_.cx += cx;
+    udp_window_.cy += cy;
+    udp_window_.n++;
+  }
+
+  if (udp_port_ != 0 && now - last_udp_ms_ >= udp_interval_) {
+    last_udp_ms_ = now;
+    udp_send();
   }
 
   if (now - last_publish_ms_ >= balance_update_interval_) {
@@ -141,6 +158,52 @@ void WiiBalanceBoard::balance_sample(uint16_t handle, float tl, float tr, float 
     last_on_board_ms_ = now;  // avoid re-triggering while the disconnect is in flight
     wii.disconnect(handle, 0x0011);
     wii.disconnect(handle, 0x0013);
+  }
+}
+
+void WiiBalanceBoard::set_udp_stream(const std::string &host, uint16_t port, uint32_t interval_ms) {
+  udp_host_ = host;
+  udp_port_ = port;
+  udp_interval_ = interval_ms;
+}
+
+void WiiBalanceBoard::udp_send() {
+  if (udp_host_.empty() || udp_port_ == 0) {
+    return;
+  }
+  if (udp_sock_ < 0) {
+    // Created lazily: the network stack is not initialised yet during setup().
+    udp_sock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (udp_sock_ < 0) {
+      ESP_LOGW(TAG, "Could not create UDP stream socket");
+      udp_port_ = 0;  // don't retry every sample
+      return;
+    }
+  }
+  char buf[224];
+  bool on = udp_window_.n > 0;
+  double n = on ? udp_window_.n : 1;
+  int len = snprintf(buf, sizeof(buf),
+                     "{\"t\":%u,\"on\":%d,\"w\":%.2f,\"tl\":%.2f,\"tr\":%.2f,\"bl\":%.2f,\"br\":%.2f,\"x\":%.2f,\"y\":%.2f}",
+                     (unsigned) millis(), on ? 1 : 0, udp_window_.total / n, udp_window_.tl / n, udp_window_.tr / n,
+                     udp_window_.bl / n, udp_window_.br / n, udp_window_.cx / n, udp_window_.cy / n);
+  udp_window_.reset();
+  if (len <= 0) {
+    return;
+  }
+  struct sockaddr_in dest {};
+  dest.sin_family = AF_INET;
+  dest.sin_port = htons(udp_port_);
+  dest.sin_addr.s_addr = inet_addr(udp_host_.c_str());
+  int sent = sendto(udp_sock_, buf, len, 0, (struct sockaddr *) &dest, sizeof(dest));
+  static uint32_t sent_count = 0;
+  if (sent < 0) {
+    if ((sent_count++ % 250) == 0) {
+      ESP_LOGW(TAG, "UDP sendto failed: errno %d", errno);
+    }
+  } else if ((sent_count++ % 250) == 0) {
+    ESP_LOGD(TAG, "UDP stream ok (%u packets sent, last %d bytes -> %s:%u)", (unsigned) sent_count, sent,
+             udp_host_.c_str(), udp_port_);
   }
 }
 
@@ -203,6 +266,8 @@ void WiiBalanceBoard::board_disconnected(uint16_t handle) {
     }
     window_.reset();
     publish_balance();
+    udp_window_.reset();
+    udp_send();
   }
 }
 
@@ -288,6 +353,9 @@ void WiiBalanceBoard::board_sample(uint16_t handle, uint8_t battery, uint8_t ref
 }
 
 void WiiBalanceBoard::setup() {
+  if (!udp_host_.empty() && udp_port_ != 0) {
+    ESP_LOGI(TAG, "UDP balance stream -> %s:%u every %u ms", udp_host_.c_str(), udp_port_, (unsigned) udp_interval_);
+  }
   if (led_pin_ >= 0) {
     pinMode(led_pin_, OUTPUT);
     digitalWrite(led_pin_, HIGH);

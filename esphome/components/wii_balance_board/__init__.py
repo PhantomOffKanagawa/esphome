@@ -40,6 +40,10 @@ CONF_COP_X = "center_of_pressure_x"
 CONF_COP_Y = "center_of_pressure_y"
 CONF_SWAY = "sway"
 CONF_ON_BOARD = "on_board"
+CONF_UDP_STREAM = "udp_stream"
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_INTERVAL = "interval"
 
 ICON_SCALE_BALANCE = "mdi:scale-balance"
 ICON_TARGET = "mdi:target"
@@ -154,6 +158,15 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_ON_BOARD): binary_sensor.binary_sensor_schema(
             icon="mdi:human-male-height"
         ),
+        cv.Optional(CONF_UDP_STREAM): cv.Schema(
+            {
+                cv.Required(CONF_HOST): cv.string_strict,
+                cv.Optional(CONF_PORT, default=5555): cv.port,
+                cv.Optional(
+                    CONF_INTERVAL, default="50ms"
+                ): cv.positive_time_period_milliseconds,
+            }
+        ),
     }
 )
 
@@ -224,3 +237,6 @@ async def to_code(config):
     if CONF_ON_BOARD in config:
         bs = await binary_sensor.new_binary_sensor(config[CONF_ON_BOARD])
         cg.add(var.set_on_board(bs))
+
+    if udp := config.get(CONF_UDP_STREAM):
+        cg.add(var.set_udp_stream(udp[CONF_HOST], udp[CONF_PORT], udp[CONF_INTERVAL]))

@@ -9,6 +9,7 @@
 
 #include "task_queue.h"
 #include <unordered_map>
+#include <string>
 
 namespace esphome {
 namespace wii_balance_board {
@@ -62,6 +63,10 @@ class WiiBalanceBoard : public Component {
   void set_sway(sensor::Sensor *s) { sway_ = s; }
   void set_on_board(binary_sensor::BinarySensor *s) { on_board_ = s; }
 
+  // High-rate UDP stream of the raw balance data (JSON, one datagram per interval)
+  // for a local visualizer, bypassing Home Assistant.
+  void set_udp_stream(const std::string &host, uint16_t port, uint32_t interval_ms);
+
  protected:
   void board_connected(uint16_t handle);
   void board_disconnected(uint16_t handle);
@@ -86,13 +91,20 @@ class WiiBalanceBoard : public Component {
   uint32_t last_publish_ms_{0};
   uint32_t last_on_board_ms_{0};
   bool on_board_state_{false};
+
+  std::string udp_host_;
+  uint16_t udp_port_{0};
+  uint32_t udp_interval_{50};
+  uint32_t last_udp_ms_{0};
+  int udp_sock_{-1};
+  void udp_send();
   // Accumulators for the current publish window
   struct BalanceWindow {
     double tl{0}, tr{0}, bl{0}, br{0}, total{0};
     double cx{0}, cy{0}, cx2{0}, cy2{0};
     uint32_t n{0};
     void reset() { *this = BalanceWindow{}; }
-  } window_;
+  } window_, udp_window_;
 
   sensor::Sensor *top_left_{nullptr};
   sensor::Sensor *top_right_{nullptr};
